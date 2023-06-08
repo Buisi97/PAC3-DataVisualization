@@ -1,0 +1,397 @@
+---
+title: "PAC3 - Visualitzacio de Dades"
+author: "Oscar Buisan Viniegra"
+date: "08-06-2023"
+output: 
+  html_document:
+    highlight: default
+    number_sections: yes
+    theme: cosmo
+    toc_depth: 2
+  word_document: default
+  pdf_document:
+    highlight: zenburn
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Descripció del dataset i objectius
+
+El dataset que treballarem en aquesta pràctica és un conjunt de dades de pisos en venda a la web d'idealista obtingut a través de l'API que ofereixen.
+S'ha descarregat més de 4.000 registres d'anuncis dins d'un radi de 5 km des del centre de Barcelona, que inclou també alguns pisos de l'Hospitalet de Llobregat.
+
+L'objectiu és fer un anàlisi de com varien els preus a la ciutat en funció de diferents paràmetres - com ara el districte, la planta, els metres quadrats o el nombre d'habitacions, entre d'altres - i crear un model que pugui estimar el preu d'un pis utilitzant aquestes variables.
+
+# Integració i selecció
+
+En primer lloc es realitzarà la lectura del fitxer i es guardaran les dades en una variable que anomenarem **dades** i es visualitzaaran.
+
+```{r}
+rm(list=ls())
+library(readxl)
+dades <- read_excel("idealista_data_flats.xlsx")
+head(dades)
+```
+
+Seleccionarem les dades que volem per l'anàlisi i farem una inspecció dels formats i els valors.
+
+No utilitzarem l'url però la mantenim per si es vol accedir a l'anunci.
+
+```{r}
+dades<-dades[which(dades$municipality=='Barcelona'),]
+dades<-dades[,c('propertyCode','district',
+                'price','size','priceByArea','floor','exterior','rooms','bathrooms','status',
+                'url')]
+summary(dades)
+```
+
+Seguidament s'arreglaran els formats, valors buits i errors.
+
+```{r}
+#propertyCode
+dades$propertyCode<-as.character(dades$propertyCode)
+sum(duplicated(dades$propertyCode))==0 #que no hi hagi duplicats
+```
+
+
+```{r}
+#district
+unique(dades$district)
+#hem d'arreglar els accents - que ja estaven malament a l'arxiu d'origen
+dades$district[which(grepl("Sant Gervasi", dades$district, fixed=TRUE))]<-'Sarrià - Sant Gervasi'
+dades$district[which(grepl("cia", dades$district, fixed=TRUE))]<-'Gràcia'
+dades$district[which(grepl("Sants-", dades$district, fixed=TRUE))]<-'Sants - Montjuïc'
+dades$district[which(grepl("Sant Mart", dades$district, fixed=TRUE))]<-'Sant Martí'
+dades$district[which(grepl("Horta Guinard", dades$district, fixed=TRUE))]<-'Horta Guinardó'
+dades$district[which(grepl("Santa Eul", dades$district, fixed=TRUE))]<-'Santa Eulàlia'
+dades$district<-as.factor(dades$district)
+print("Després d'arreglar-los")
+unique(dades$district)
+```
+
+```{r}
+#price
+dades$price<-as.numeric(dades$price)
+summary(dades$price)
+```
+
+```{r}
+#size
+dades$size<-as.numeric(dades$size)
+summary(dades$size)
+```
+
+```{r}
+#priceByArea
+#el recalculem ja que tenia errors i és un càlcul senzill
+dades$priceByArea<-round(dades$price/dades$size,2)
+summary(dades$priceByArea)
+```
+
+```{r}
+#floor
+table(dades$floor)
+dades$floor[which(dades$floor=='bj')]<-0
+dades$floor[which(dades$floor=='en')]<-0.5
+dades$floor[which(dades$floor=='st')]<-(-1)
+dades$floor<-as.numeric(dades$floor)
+
+#ens interessa fer grups més petits
+dades$floor<-ifelse(dades$floor<0.5,'0',
+                    ifelse(dades$floor>5,'6 o més',dades$floor))
+
+table(dades$floor)
+```
+
+```{r}
+#exterior
+table(dades$exterior)
+```
+
+```{r}
+#rooms
+table(dades$rooms)
+dades$rooms<-ifelse(dades$rooms>3,'4 o més',dades$rooms)
+table(dades$rooms)
+```
+
+```{r}
+#bathrooms
+table(dades$bathrooms)
+dades$bathrooms<-ifelse(dades$bathrooms>2,'3 o més',dades$bathrooms)
+table(dades$bathrooms)
+```
+
+```{r}
+#status
+table(dades$status)
+dades$status[which(!dades$status %in% c('renew','good','newdevelopment'))]<-'undisclosed'
+table(dades$status)
+```
+
+Finalment, visualitzem com han quedat les dades un cop han estat arreglades per l'anàlisi.
+
+```{r}
+summary(dades)
+```
+
+******
+
+#Neteja de les dades
+
+Comprovem que les dades no continguin zeros o elements buits.
+
+```{r}
+print('NA')
+colSums(is.na(dades))
+print('Blancs')
+colSums(dades == "")
+```
+
+
+Seguidament, s'identificarà la presència de outliers en les variables i s'analitzarà si cal la seva eliminació o com els tractarem. Això ho relitzarem mitjançant boxplots per a tenir un component visual més clar. Per a conèixer aquests outliers utilitzarem la comanda out.
+
+```{r}
+preu <- boxplot(dades$price, col = "skyblue", frame.plot = F)
+preu <- boxplot.stats(dades$price)$out
+idx <- which(dades$price %in% preu)
+sort(dades$price[idx])
+```
+
+```{r}
+tamany <- boxplot(dades$size, col = "skyblue", frame.plot = F)
+tamany <- boxplot.stats(dades$size)$out
+idx <- which(dades$size %in% tamany)
+sort(dades$size[idx])
+```
+
+```{r}
+preuPerArea <- boxplot(dades$priceByArea, col = "skyblue", frame.plot = F)
+preuPerArea <- boxplot.stats(dades$priceByArea)$out
+idx <- which(dades$priceByArea %in% preuPerArea)
+sort(dades$priceByArea[idx])
+```
+
+En els tres gràfics de boxplot podem veure una quantitat d'outliers a les bandes superiors. Veiem, però, que aquests sembla que corresponguin als extrems d'una cua del que podria ser una distribució normal, és a dir, que, si bé sí que són outliers, no sembla que siguin dades errònies. Decidim conservar-los ja que aporten informació que considerem autèntica i valuosa, i més endavant ja aplicarem mètodes per a corregir-ne els efectes, com ara una normalització dels valors.
+
+# Anàlisi de les dades
+
+## Selecció del grup de dades a analitzar
+
+Farem un estudi descriptiu de les variables qualitatives.
+
+```{r}
+library(ggplot2)
+par(mfrow = c(1,1))
+
+g1 <- boxplot(price ~ floor, data = dades, 
+              main = "Preu en funció de la planta",(par(cex.axis=0.7)))
+
+g2 <- boxplot(price ~ exterior, data = dades, 
+              main = "Preu en funció de si es troba en exterior")
+
+g3 <- boxplot(price ~ rooms, data = dades, 
+              main = "Preu en funció del nombre d'habitacions",(par(cex.axis=0.7)))
+
+g4 <- boxplot(price ~ bathrooms, data = dades, 
+              main = "Preu en funció del nombre de banys",(par(cex.axis=0.8)))
+
+g5 <- boxplot(price ~ district, data = dades, 
+              main = "Preu en funció del districte",las=2,xlab='',par(cex.axis=0.6))
+
+g6 <- boxplot(price ~ status, data = dades, main = "Preu en funció del status")
+
+```
+
+## Comprovació de la normalitat i homogenïtat de la variància
+
+### Comprovació de la normalitat
+
+Estudiarem si les variables contínues - preu, mida i preu/m2 estan distribuïdes normalment.
+
+```{r}
+shapiro.test(dades$price)
+hist(dades$price, breaks=40)
+
+shapiro.test(dades$size)
+hist(dades$size, breaks=40)
+
+shapiro.test(dades$priceByArea)
+hist(dades$priceByArea, breaks=40)
+```
+
+Podem comprovar que la p-value en tots tres casos és molt inferior al p-valor de 0.05 i això vol dir que es refusa l'hipòtesi nul·la i, per tant, les dades obtingudes no provenen d'una distribució normal.
+
+Observant els gràfics es veu que totes les variables tenen distribucions assimètriques.
+
+De totes maneres, sabem que les distribucions de preus habitualment tenen una cua llarga a la dreta. Podem intentar fer-hi alguna transformació per obtenir una distribució més normal.
+
+```{r}
+library('MASS')
+
+b <- boxcox(lm(dades$price ~ 1))
+
+# Lambda
+lambda <- b$x[which.max(b$y)]
+dades$price_normal <- (dades$price ^ lambda - 1) / lambda
+
+shapiro.test(dades$price)
+hist(dades$price_normal,breaks=40)
+```
+
+El test de shapiro-wilks ens continua rebutjant la hipòtesi nul·la però l'histograma almenys mostra que la distribució ja s'assembla més a una de normal.
+
+### Comprovació de la homogeneïtat de la variància
+
+Com que les dades no compleixen la condició de normalitat, emprarem el test de Fligner - Killeen per a comprovar la homoscedasticitat. La igualtat de variàncies que es compararà serà la del preu amb la resta de variables que és com volem enfocar el nostre anàlisi.
+
+```{r}
+fligner.test(price ~ floor, data = dades)
+fligner.test(price ~ rooms, data = dades)
+fligner.test(price ~ bathrooms, data = dades)
+fligner.test(price ~ district, data = dades)
+fligner.test(price ~ exterior, data = dades)
+fligner.test(price ~ status, data = dades)
+```
+
+Podem tornar a veure que la p-value és inferior a 0.05 en la comparació de la variància del preu amb totes les altres variables excepte per l'estat del pis, per tant, refusem l'hipòtesi nul·la de la igualtat de variàncies, concluïnt que hi ha diferència entre les variacions en les variables utilitzades respecte el preu en totes aquestes altres variables.
+
+Si, en canvi, utilitzéssim la variable price transformada, veuríem que:
+
+```{r}
+fligner.test(price_normal ~ floor, data = dades)
+fligner.test(price_normal ~ rooms, data = dades)
+fligner.test(price_normal ~ bathrooms, data = dades)
+fligner.test(price_normal ~ district, data = dades)
+fligner.test(price_normal ~ exterior, data = dades)
+fligner.test(price_normal ~ status, data = dades)
+```
+
+No podríem rebutjar la hipòtesi d'homocedasticitat de variàncies de preu normalitzat segons exterior o habitacions.
+
+## Proves estadístiques per a la comprovació de les dades
+
+### Contrast d'hipòtesis d'igualtat de mitjanes per grups
+
+Utilitzarem la variable preu normalitzat, assumint que aquest segueix una distribució normal per poder aplicar el test T de Student quan tenim dos grups només.
+
+```{r}
+t.test(price_normal~exterior, data=dades, alternative = 'two.sided', var.equal = T)
+```
+Sembla que les mitjanes no són iguals en interiors o exteriors. Vegem les altres variables amb tests ANOVA.
+
+```{r}
+summary(aov(price_normal ~ rooms, data = dades))
+summary(aov(price_normal ~ district, data = dades))
+summary(aov(price_normal ~ status, data = dades))
+summary(aov(price_normal ~ floor, data = dades))
+summary(aov(price_normal ~ bathrooms, data = dades))
+```
+En totes les variables s'observen diferències de preu pels seus grups. Inclús per l'estat del pis, encara que amb menys força (però suficient).
+
+### Correlacions
+
+Correlació de les variables numèriques amb el preu.
+
+```{r}
+cor.test(dades$price, dades$size)
+cor.test(dades$price, dades$priceByArea)
+```
+
+
+
+```{r}
+library(PerformanceAnalytics)
+library(dplyr); library(corrplot)
+correlation <- select(dades, price, size, priceByArea)
+correlacion<-round(cor(correlation), 1)
+corrplot::corrplot(correlacion,
+                   method = 'number')
+```
+
+Clarament el preu està relacionat amb la mida dels pisos i el preu per metre quadrat.
+
+
+### Regressió lineal 
+
+Volem veure si existeix una relació entre el preu i la resta de variables. Partirem d'un primer model de regressió lineal i aplicarem el criteri de selecció de variables pel valor matemàtic Akaike per d'aquesta forma poder eliminar quines tenen menys influència i aconseguir un model optimitzat.
+
+Utlitzarem el preu normalitzat ja que segurament ens donarà més bons resultats, i uns residus més normals.
+
+```{r}
+model <- lm(price_normal ~  size + rooms + floor + bathrooms + district + exterior + status, data = dades)
+summary(model)
+```
+
+Per a determinar la qualitat del model s’emprarà el valor matemàtic Akaike (AIC).
+
+```{r}
+library(MASS)
+
+step <- stepAIC(model, direction = "both")
+
+step$anova
+```
+
+
+```{r}
+library(visreg)
+visreg(model,"price_normal", partial = F)  
+```
+
+Per tant, com que el model final és igual que el de partida, es pot arribar a la conclusió que el model ja és òptim.
+
+
+Posteriorment, comprovarem la colinealitat, que la definirem com una alta correlació entre les variables del model. Per a detectar-la es pot fer de tres formes, comprovant la correlació entre variables, amb el coeficients t’s no significatius i una R^2 elevada i amb el factor d’influència de la variància.
+
+A continuació es comprovarà la relació lineal entre els predictors i la variable 
+dependent.
+
+```{r}
+library(ggplot2)
+ggplot(data = dades, aes(x = price_normal, y = model$residuals)) + 
+  geom_point() + 
+  geom_smooth(color = "firebrick") + 
+  geom_hline(yintercept = 0) +
+  theme_bw()
+```
+
+Seguidament, comprovarem la correlació amb la funció dwt i l'anàlisi d'inflació de variància amb la funció vif.
+
+```{r}
+library(car);library(dplyr)
+dwt(model, alternative = "two.sided")
+vif(model)
+```
+Podem concluir que els predictors no mostren autocorrelació, però la inflació de variància no és alta, cosa que implica que les variables són significatives per al model degut que els seus coeficients t's són molt baixos i, per tant, es podria dir que no existeixen problemes de colinealitat en el modelF.
+
+Finalment, per al diagnosi del model es construiran dos gràfics, un amb els valors ajustats enfront dels residus que ens permetrà veure si la variància és constant i, un altre, que compara els residus del model amb els valors d'una variable que es distribueix normalment.
+
+```{r}
+residus <- rstandard(model)
+valors_ajustats <- fitted(model)
+plot(valors_ajustats, residus)
+```
+
+```{r}
+qqnorm(residus)
+qqline(residus)
+```
+
+En el cas de la homocedasticitat existeix un patró, per tant, implica que sí existeix en el model. I  en el cas de la normalitat sembla que alguns dels residus en els extrems inferiors i superiors no es distribueixen de forma normal degut que no s’alinien amb la recta.
+
+```{r}
+#openxlsx::write.xlsx(dades,'dadesFinals.xlsx')
+```
+
+# Conclusions
+
+Hem vist que els paràmetres que hem estudiat sí que influeixen en el preu dels pisos de Barcelona. Per tal d'aconseguir un model de regressió prou fiable hem hagut de comprovar la normalitat tant de les variables que féiem servir com dels residus i aplicar els mètodes estadístics corresponents per arribar a uns resultats encertats.
+
+
+
+
+
